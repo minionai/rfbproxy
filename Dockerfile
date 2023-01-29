@@ -10,5 +10,6 @@ FROM rust:alpine
 RUN apk add --no-cache musl-dev build-base pkgconfig openssl-dev protobuf-dev lame-dev libpulse
 
 WORKDIR /build
+ENV CARGO_HOME=/build/.cargo
 
 CMD cargo build --release
