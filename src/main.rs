@@ -25,6 +25,7 @@ use path_clean::PathClean;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio::time::{Duration, interval};
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
@@ -62,21 +63,30 @@ where
 
     let server_to_client = async move {
         let mut buffer = [0u8; 4096];
+        let mut interval = interval(Duration::from_secs(25));
         loop {
-            match rs.read(&mut buffer[..]).await {
-                Ok(0) => {
-                    break;
-                }
-                Ok(n) => {
-                    if let Err(err) = wws.send(Message::Binary((&buffer[..n]).to_vec())).await {
-                        log::error!("failed to write a message to the client: {:#}", err);
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(err) = wws.send(Message::Ping(Vec::new())).await {
+                        log::error!("failed to send a ping to the client: {:#}", err);
                         break;
                     }
-                }
-                Err(err) => {
-                    log::error!("failed to read a message from the server: {:#}", err);
-                    break;
-                }
+                },
+                n = rs.read(&mut buffer[..]) => {
+                    match n {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if let Err(err) = wws.send(Message::Binary((&buffer[..n]).to_vec())).await {
+                                log::error!("failed to write a message to the client: {:#}", err);
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            log::error!("failed to read a message from the server: {:#}", err);
+                            break;
+                        }
+                    }
+                },
             }
         }
 
@@ -147,6 +157,7 @@ where
     };
 
     let server_to_client = async {
+        let mut interval = interval(Duration::from_secs(25));
         loop {
             let payload = tokio::select! {
                 Some(payload) = client_rx.recv() => Some(payload),
@@ -158,6 +169,13 @@ where
                             Some(msg.into_data())
                         }
                     }
+                },
+                _ = interval.tick() => {
+                    if let Err(err) = wws.send(Message::Ping(Vec::new())).await {
+                        log::error!("failed to send a ping to the client: {:#}", err);
+                        break;
+                    }
+                    None
                 },
                 else => break,
             };
